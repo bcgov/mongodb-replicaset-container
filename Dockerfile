@@ -58,6 +58,9 @@ COPY scripts/add_users.js /docker-entrypoint-initdb.d/
 COPY scripts/*.js /opt/scripts/
 COPY mongod.conf /etc/mongod.conf
 
+# Install minio to allow for copying of backups to S3
+RUN curl "https://dl.min.io/client/mc/release/linux-amd64/mc" -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc
+
 # Install mongosh. Not available as a RPM in this
 # repo version so we get it the hard way.
 RUN curl -sL https://downloads.mongodb.com/compass/mongosh-1.0.0-linux-x64.tgz | \

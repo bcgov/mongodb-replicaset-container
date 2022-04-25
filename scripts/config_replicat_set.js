@@ -1,4 +1,4 @@
-// Copyright 2021 The Province of British Columbia
+// Copyright 2022 The Province of British Columbia
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,110 +13,69 @@
 // limitations under the License.
 //
 
-const firstMemberPriority = 1.1;
-const firstMemberID = 0;
-const codeNotYetInitialized = 94;
 const fullHostName = process.env.HOST_NAME;
 const replicaSetName = process.env.MONGODB_REPLICA_NAME;
+var primaryPriority = 3;
+var secondaryPriority = 1;
 
+const log = (message) => {
+  print(`REPLICASET-SETUP: ${message}`);
+}
+
+// Check environment variables
 if (typeof fullHostName === 'undefined' || fullHostName === "") {
-  print("ERROR : You must define the environment variable FQ_HOST_NAME");
-
+  log("ERROR: Missing required environment variable HOST_NAME");
+  process.exit(1);
+}
+if (typeof replicaSetName === 'undefined' || replicaSetName === "") {
+  log("ERROR: Missing required environment variable MONGODB_REPLICA_NAME");
   process.exit(1);
 }
 
-const log = (message) => {
-  print(`INFO : ${message}`);
+// fullHostName may be in the form 'hostname:port'; ':port' is optional
+//   hostname is a fully qualified domain name beginning with 'mongodb-*'
+// Get the host short name and its number
+const [FQDN, portNumber] = fullHostName.split(':');
+const [shortName, ...domainParts] = FQDN.split('.');
+const [nodeLabel, nodeNumber] = shortName.split('-');
+var nodeID = parseInt(nodeNumber);
+var replicaHostName = fullHostName;
+var memberExists = 0;
+
+// See if the replica set is configured and contains this member.  If so, exit.
+// ----------------------------------------------------------------------------
+log(`replicaHostName: ${replicaHostName}`);
+try {
+  memberExists = rs.config().members.filter(m => m.host.split(':')[0] === replicaHostName).length;
+} catch(e) {
+  log('Replica set not configured');
+}
+if (memberExists > 0) {
+  log(`Member ${replicaHostName} already exists in replica set.`);
+  process.exit(0);
 }
 
-// Initialize the replica set with the first member,
-// assign `_id` 0 to match the first `StatefulSet` member
-// ID.
-const initReplicaSet = (replicaSetName, memberID, memberName) => {
-
-  const rsConfig = {
-    _id: replicaSetName,
-    members: [{
-      _id: memberID,
-      host: memberName
-    }]
-  };
-
-  print('Initalizing replica set.');
-
-  rs.initiate(rsConfig);
-
-  log('Waiting for PRIMARY ...');
-
-  while (!rs.isMaster().ismaster) { 
-    log('Waiting ...');
-
-    sleep(100); 
-  }
-
-  log('PRIMARY on-line. Moving on.');
-}
-
-// When started as a `StatefulSet` on k8s its better to have
-// the first stateful set member be the PRIMARY because its
-// first to start, and last to shut down.
-const bumpFirstMemberZeroPriority = () => {
-
-  log('Checking member priority.');
-
-  let config = rs.config();
-  for (const m in config.members) {
-    // The first `StatefulSet` member would be `*-0` and
-    // we added it with `_id` 0.
-    if (config.members[m]._id === firstMemberID) {
-      if (config.members[m].priority === firstMemberPriority) {
-        log(`First member priority already ${firstMemberPriority}. Skipping.`);
-        
-        return;
-      }
-
-      // Bump the member priority so the PRIMARY role
-      // gravitates towards it.
-      log('Bumping first member priority.');
-      
-      config.members[m].priority = firstMemberPriority;
-      rs.reconfig(config);
-    }
-  }
-}
-
-const addMemberToReplicaSet = (host) => {
-
-  const [ shortName ] = host.split('.');
-  const memberExists = rs.config().members.filter(m => m.host.split(':')[0] === host).length > 0;
-
-  if (memberExists) {
-    log(`Member ${shortName} exists. Skipping.`);
-    
-    return;
-  }
-
-  log(`Adding ${shortName} to replica set`);
-  rs.add(host);
-}
-
-const main = () => {
-
-  log('Running management script.');
-
+// If this is the first instance (mongodb-0), initiate the replica set and add
+//   this node with priority ${primaryPriority} (higher priority)
+// If any other node, add it with priority ${secondaryPriority} (lower priority)
+// -----------------------------------------------------------------------------
+if (shortName === "mongodb-0") {
+  log("Initializing replica set")
+  const rsConfig = { _id: replicaSetName, members: [{ _id: 0, host: replicaHostName, priority: primaryPriority }] }
   try {
-    rs.status(); // TODO:(jl) Probably a better way to do this.
-    addMemberToReplicaSet(fullHostName);
+    rs.initiate(rsConfig);
   } catch (e) {
-    if (e.code === codeNotYetInitialized) {
-      initReplicaSet(replicaSetName, firstMemberID, fullHostName);
-      bumpFirstMemberZeroPriority(); 
-    }
+    log('Failure initializing replica set');
+    log(`ERROR errmsg: ${e.errmsg}`);
+    log(`ERROR code: ${e.code}`);
   }
-
-  log('Done.');
+}
+else {
+  log('Adding member to replica set');
+  const rsAdd = { _id: nodeID, host: replicaHostName, priority: secondaryPriority }
+  rs.add(rsAdd);
 }
 
-main();
+log('Done.');
 
 process.exit(0);
