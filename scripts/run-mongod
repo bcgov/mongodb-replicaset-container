@@ -63,7 +63,8 @@ start_mongod() {
   -f /etc/mongod.conf \
   --auth \
   --keyFile ${KEY_FILE} \
-  --replSet ${MONGODB_REPLICA_NAME} &
+  --replSet ${MONGODB_REPLICA_NAME} \
+  --wiredTigerCacheSizeGB=${MONGO_WIRED_TIGER_CACHE_GB} &
 }
 
 start_mongod_local() {
